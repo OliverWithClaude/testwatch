@@ -74,6 +74,8 @@
 
 {% block scripts %}
 <script>
+const JIRA_BASE_URL = 'https://atc.bmwgroup.net/jira/browse/';
+
 let currentSession = null;
 let currentEntryId = null;
 let currentEntryStart = null;
@@ -83,6 +85,25 @@ let ranks = [];
 let entries = [];
 let selectedActivityTypeId = null;
 let selectedRankId = null;
+let _activateGeneration = 0;  // guard against concurrent activateSession calls
+
+// --- Robust fetch with error handling ---
+async function fetchJson(url, opts) {
+    try {
+        const r = await fetch(url, opts);
+        if (!r.ok) {
+            const text = await r.text();
+            console.error(`API error ${r.status} for ${url}:`, text.substring(0, 200));
+            if (!opts || !opts.method || opts.method === 'GET') return [];
+            return {ok: false, error: `HTTP ${r.status}`};
+        }
+        return await r.json();
+    } catch (e) {
+        console.error(`Network error for ${url}:`, e);
+        if (!opts || !opts.method || opts.method === 'GET') return [];
+        return {ok: false, error: e.message};
+    }
+}
 
 // --- LocalStorage helpers ---
 function saveSessionState() {
@@ -111,6 +132,27 @@ function loadSessionState() {
     } catch { return null; }
 }
 
+// --- Validation: ensure stored IDs still exist in server data ---
+function validateActivityTypeId(id) {
+    if (id && activityTypes.find(a => a.id === id)) return id;
+    console.warn('Stored activity type ID not found, using first available');
+    return activityTypes.length > 0 ? activityTypes[0].id : null;
+}
+
+function validateRankId(id) {
+    if (id && ranks.find(r => r.id === id)) return id;
+    console.warn('Stored rank ID not found, using first available');
+    return ranks.length > 0 ? ranks[0].id : null;
+}
+
+// --- Clock ---
+function updatePageClock() {
+    const el = document.getElementById('clock');
+    if (el) el.textContent = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+setInterval(updatePageClock, 1000);
+updatePageClock();
+
 // --- Init ---
 document.addEventListener('DOMContentLoaded', async () => {
     activityTypes = await fetchJson('/api/activity-types');
@@ -120,22 +162,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Auto-restore session from localStorage
     const saved = loadSessionState();
     if (saved && saved.sessionId) {
-        // Verify session still exists and is active
         const sessions = await fetchJson('/api/sessions');
+        // Guard: if user already started/resumed a session while we were fetching, abort restore
+        if (currentSession) {
+            console.log('Auto-restore aborted: user already started a session');
+            return;
+        }
         const session = sessions.find(s => s.id === saved.sessionId && !s.ended_at);
         if (session) {
-            currentSession = { id: session.id, scenario_id: session.scenario_id, name: session.name };
+            currentSession = {id: session.id, scenario_id: session.scenario_id, name: session.name};
             await activateSession(session.scenario_id);
-            // Restore running entry
+
+            // Restore running entry — validate IDs against loaded data
             if (saved.currentEntryId && saved.currentEntryStart) {
                 currentEntryId = saved.currentEntryId;
                 currentEntryStart = new Date(saved.currentEntryStart);
-                if (saved.selectedActivityTypeId) selectedActivityTypeId = saved.selectedActivityTypeId;
-                if (saved.selectedRankId) selectedRankId = saved.selectedRankId;
+                selectedActivityTypeId = validateActivityTypeId(saved.selectedActivityTypeId);
+                selectedRankId = validateRankId(saved.selectedRankId);
                 renderActivityButtons();
                 updateRankSelectValue();
                 startTimerDisplay();
                 updateCurrentActivityInfo();
+                saveSessionState();
             }
             return;
         } else {
@@ -143,22 +191,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 });
-
-const JIRA_BASE_URL = 'https://atc.bmwgroup.net/jira/browse/';
-
-// --- Clock on stopwatch page ---
-function updatePageClock() {
-    const el = document.getElementById('clock');
-    if (!el) return;
-    el.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-setInterval(updatePageClock, 1000);
-updatePageClock();
-
-async function fetchJson(url, opts) {
-    const r = await fetch(url, opts);
-    return r.json();
-}
 
 async function loadScenarios() {
     const scenarios = await fetchJson('/api/scenarios');
@@ -185,7 +217,10 @@ async function startSession() {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({scenario_id: parseInt(scenarioId), name})
     });
+    if (!data.id) return alert('Failed to create session');
     currentSession = {id: data.id, scenario_id: parseInt(scenarioId), name};
+    selectedActivityTypeId = null;
+    selectedRankId = null;
     await activateSession(parseInt(scenarioId));
     saveSessionState();
 }
@@ -197,31 +232,48 @@ async function resumeSession() {
     const session = sessions.find(s => s.id === parseInt(sessionId));
     if (!session) return;
     currentSession = {id: session.id, scenario_id: session.scenario_id, name: session.name};
+    selectedActivityTypeId = null;
+    selectedRankId = null;
     await activateSession(session.scenario_id);
-    entries = await fetchJson(`/api/sessions/${currentSession.id}/entries`);
-    renderTimeline();
-    renderRankTable();
     saveSessionState();
 }
 
 async function activateSession(scenarioId) {
+    const myGeneration = ++_activateGeneration;
+
     document.getElementById('session-setup').style.display = 'none';
     document.getElementById('active-session').style.display = 'block';
     document.getElementById('session-title').textContent = `Session #${currentSession.id}`;
 
     ranks = await fetchJson(`/api/scenarios/${scenarioId}/ranks`);
+    if (myGeneration !== _activateGeneration) {
+        console.warn(`activateSession(${scenarioId}) superseded by newer call, aborting`);
+        return;
+    }
+    console.log(`Loaded ${ranks.length} ranks for scenario ${scenarioId}`);
+
     const rankSel = document.getElementById('rank-select');
     rankSel.innerHTML = ranks.map(r =>
         `<option value="${r.id}">${r.rank_id} - ${r.description} [${r.workstream_name || '?'}]</option>`
     ).join('');
-    if (ranks.length > 0 && !selectedRankId) selectedRankId = ranks[0].id;
+
+    // Set defaults if not already set
+    if (!selectedRankId || !ranks.find(r => r.id === selectedRankId)) {
+        selectedRankId = ranks.length > 0 ? ranks[0].id : null;
+    }
+    if (!selectedActivityTypeId || !activityTypes.find(a => a.id === selectedActivityTypeId)) {
+        selectedActivityTypeId = activityTypes.length > 0 ? activityTypes[0].id : null;
+    }
+
     updateRankSelectValue();
+    renderActivityButtons();
     rankSel.onchange = () => { selectedRankId = parseInt(rankSel.value); updateCurrentEntry(); saveSessionState(); };
 
-    renderActivityButtons();
-    if (activityTypes.length > 0 && !selectedActivityTypeId) selectedActivityTypeId = activityTypes[0].id;
-
     entries = await fetchJson(`/api/sessions/${currentSession.id}/entries`);
+    if (myGeneration !== _activateGeneration) {
+        console.warn(`activateSession(${scenarioId}) superseded by newer call after entries fetch, aborting`);
+        return;
+    }
     renderTimeline();
     renderRankTable();
 }
@@ -262,7 +314,7 @@ function updateCurrentActivityInfo() {
 
 async function updateCurrentEntry() {
     if (!currentEntryId) return;
-    await fetch(`/api/entries/${currentEntryId}`, {
+    await fetchJson(`/api/entries/${currentEntryId}`, {
         method: 'PUT',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
@@ -295,11 +347,10 @@ function updateTimerDisplay() {
 
 // --- Next Activity ---
 async function nextActivity() {
-    // 1. Close current entry if any
     if (currentEntryId) {
         const now = new Date().toISOString();
         const duration = (new Date() - currentEntryStart) / 1000;
-        await fetch(`/api/entries/${currentEntryId}`, {
+        await fetchJson(`/api/entries/${currentEntryId}`, {
             method: 'PUT',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ended_at: now, duration_seconds: duration})
@@ -322,7 +373,6 @@ async function nextActivity() {
         });
     }
 
-    // 2. Create new entry
     if (!selectedRankId || !selectedActivityTypeId) {
         alert('Select a rank and activity type');
         return;
@@ -332,6 +382,7 @@ async function nextActivity() {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({rank_id: selectedRankId, activity_type_id: selectedActivityTypeId})
     });
+    if (!data.id) { alert('Failed to create entry'); return; }
     currentEntryId = data.id;
     startTimer();
     saveSessionState();
@@ -348,13 +399,13 @@ async function endSession() {
     if (currentEntryId) {
         const now = new Date().toISOString();
         const duration = (new Date() - currentEntryStart) / 1000;
-        await fetch(`/api/entries/${currentEntryId}`, {
+        await fetchJson(`/api/entries/${currentEntryId}`, {
             method: 'PUT',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ended_at: now, duration_seconds: duration})
         });
     }
-    await fetch(`/api/sessions/${currentSession.id}/end`, {method: 'POST'});
+    await fetchJson(`/api/sessions/${currentSession.id}/end`, {method: 'POST'});
     clearInterval(timerInterval);
     currentSession = null;
     currentEntryId = null;
@@ -391,18 +442,10 @@ function renderRankTable() {
         container.innerHTML = '<div class="empty">No ranks in this scenario.</div>';
         return;
     }
-
     const maxDuration = Math.max(...entries.filter(e => e.duration_seconds > 0).map(e => e.duration_seconds), 1);
-
     container.innerHTML = `<table class="table">
         <thead>
-            <tr>
-                <th>Rank</th>
-                <th>Description</th>
-                <th>Workstream</th>
-                <th>Timeline</th>
-                <th>Total</th>
-            </tr>
+            <tr><th>Rank</th><th>Description</th><th>Workstream</th><th>Timeline</th><th>Total</th></tr>
         </thead>
         <tbody>
             ${ranks.map(r => {

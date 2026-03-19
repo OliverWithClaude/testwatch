@@ -7,3 +7,5 @@ testwatch.log
 *.egg-info/
 dist/
 build/
+*.csv
+.claude/

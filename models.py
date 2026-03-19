@@ -1,20 +1,31 @@
 import sqlite3
 import os
-import json
 from datetime import datetime
+from flask import g
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'testwatch.db')
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    """Get a database connection from Flask's per-request context."""
+    if 'db' not in g:
+        g.db = sqlite3.connect(DB_PATH)
+        g.db.row_factory = sqlite3.Row
+        g.db.execute("PRAGMA foreign_keys = ON")
+    return g.db
+
+
+def close_db(e=None):
+    """Close the database connection at end of request."""
+    db = g.pop('db', None)
+    if db is not None:
+        db.close()
 
 
 def init_db():
-    conn = get_db()
+    """Initialize database schema. Safe to call repeatedly — uses IF NOT EXISTS."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON")
     c = conn.cursor()
 
     c.execute('''CREATE TABLE IF NOT EXISTS activity_types (

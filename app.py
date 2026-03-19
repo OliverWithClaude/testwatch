@@ -1,13 +1,14 @@
 import logging
 import sys
 import os
-
 import csv
 import io
 import re
+import hashlib
+import time
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for
-from models import get_db, init_db
+from flask import Flask, render_template, request, jsonify
+from models import get_db, init_db, close_db
 from datetime import datetime
 
 # Logging setup
@@ -21,12 +22,64 @@ logging.basicConfig(
 )
 logger = logging.getLogger('testwatch')
 
+APP_VERSION = "2.0.0"
+APP_START_TIME = time.time()
+
+
+def _source_fingerprint():
+    h = hashlib.md5()
+    for fn in ['app.py', 'models.py']:
+        fp = os.path.join(os.path.dirname(__file__), fn)
+        if os.path.exists(fp):
+            h.update(open(fp, 'rb').read())
+    return h.hexdigest()[:8]
+
+
 app = Flask(__name__)
+app.teardown_appcontext(close_db)
 
 
 @app.before_request
 def log_request():
     logger.info("Request: %s %s", request.method, request.path)
+
+
+@app.after_request
+def add_cache_headers(response):
+    if request.path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+    return response
+
+
+# --- Health & Version ---
+
+@app.route('/api/health')
+def health():
+    db_ok = False
+    try:
+        db = get_db()
+        db.execute("SELECT 1").fetchone()
+        db_ok = True
+    except Exception as e:
+        logger.error("Health check DB error: %s", e)
+    return jsonify({
+        "version": APP_VERSION,
+        "source_hash": _source_fingerprint(),
+        "uptime_seconds": round(time.time() - APP_START_TIME),
+        "started_at": datetime.fromtimestamp(APP_START_TIME).isoformat(),
+        "db_ok": db_ok,
+        "pid": os.getpid(),
+        "python_version": sys.version,
+    })
+
+
+@app.route('/api/version')
+def version():
+    return jsonify({
+        "version": APP_VERSION,
+        "source_hash": _source_fingerprint(),
+    })
 
 
 # --- Pages ---
@@ -62,7 +115,6 @@ def admin():
 def get_activity_types():
     db = get_db()
     rows = db.execute("SELECT * FROM activity_types ORDER BY sort_order").fetchall()
-    db.close()
     return jsonify([dict(r) for r in rows])
 
 
@@ -70,13 +122,10 @@ def get_activity_types():
 def create_activity_type():
     data = request.json
     db = get_db()
-    try:
-        max_order = db.execute("SELECT COALESCE(MAX(sort_order),0) FROM activity_types").fetchone()[0]
-        db.execute("INSERT INTO activity_types (name, color, sort_order) VALUES (?, ?, ?)",
-                   (data['name'], data['color'], max_order + 1))
-        db.commit()
-    finally:
-        db.close()
+    max_order = db.execute("SELECT COALESCE(MAX(sort_order),0) FROM activity_types").fetchone()[0]
+    db.execute("INSERT INTO activity_types (name, color, sort_order) VALUES (?, ?, ?)",
+               (data['name'], data['color'], max_order + 1))
+    db.commit()
     return jsonify({"ok": True}), 201
 
 
@@ -87,7 +136,6 @@ def update_activity_type(id):
     db.execute("UPDATE activity_types SET name=?, color=? WHERE id=?",
                (data['name'], data['color'], id))
     db.commit()
-    db.close()
     return jsonify({"ok": True})
 
 
@@ -96,7 +144,6 @@ def delete_activity_type(id):
     db = get_db()
     db.execute("DELETE FROM activity_types WHERE id=?", (id,))
     db.commit()
-    db.close()
     return jsonify({"ok": True})
 
 
@@ -106,7 +153,6 @@ def delete_activity_type(id):
 def get_workstreams():
     db = get_db()
     rows = db.execute("SELECT * FROM workstreams ORDER BY name").fetchall()
-    db.close()
     return jsonify([dict(r) for r in rows])
 
 
@@ -114,11 +160,8 @@ def get_workstreams():
 def create_workstream():
     data = request.json
     db = get_db()
-    try:
-        db.execute("INSERT INTO workstreams (name) VALUES (?)", (data['name'],))
-        db.commit()
-    finally:
-        db.close()
+    db.execute("INSERT INTO workstreams (name) VALUES (?)", (data['name'],))
+    db.commit()
     return jsonify({"ok": True}), 201
 
 
@@ -127,7 +170,6 @@ def delete_workstream(id):
     db = get_db()
     db.execute("DELETE FROM workstreams WHERE id=?", (id,))
     db.commit()
-    db.close()
     return jsonify({"ok": True})
 
 
@@ -137,7 +179,6 @@ def delete_workstream(id):
 def get_scenarios():
     db = get_db()
     rows = db.execute("SELECT * FROM scenarios ORDER BY name").fetchall()
-    db.close()
     return jsonify([dict(r) for r in rows])
 
 
@@ -145,13 +186,9 @@ def get_scenarios():
 def create_scenario():
     data = request.json
     db = get_db()
-    try:
-        c = db.execute("INSERT INTO scenarios (name) VALUES (?)", (data['name'],))
-        db.commit()
-        scenario_id = c.lastrowid
-    finally:
-        db.close()
-    return jsonify({"ok": True, "id": scenario_id}), 201
+    c = db.execute("INSERT INTO scenarios (name) VALUES (?)", (data['name'],))
+    db.commit()
+    return jsonify({"ok": True, "id": c.lastrowid}), 201
 
 
 @app.route('/api/scenarios/<int:id>', methods=['PUT'])
@@ -160,7 +197,6 @@ def update_scenario(id):
     db = get_db()
     db.execute("UPDATE scenarios SET name=? WHERE id=?", (data['name'], id))
     db.commit()
-    db.close()
     return jsonify({"ok": True})
 
 
@@ -169,7 +205,6 @@ def delete_scenario(id):
     db = get_db()
     db.execute("DELETE FROM scenarios WHERE id=?", (id,))
     db.commit()
-    db.close()
     return jsonify({"ok": True})
 
 
@@ -185,7 +220,6 @@ def get_ranks(scenario_id):
         WHERE r.scenario_id = ?
         ORDER BY r.sort_order
     """, (scenario_id,)).fetchall()
-    db.close()
     return jsonify([dict(r) for r in rows])
 
 
@@ -193,16 +227,13 @@ def get_ranks(scenario_id):
 def create_rank(scenario_id):
     data = request.json
     db = get_db()
-    try:
-        max_order = db.execute("SELECT COALESCE(MAX(sort_order),0) FROM ranks WHERE scenario_id=?",
-                               (scenario_id,)).fetchone()[0]
-        db.execute("""INSERT INTO ranks (scenario_id, rank_id, description, workstream_id, sort_order)
-                      VALUES (?, ?, ?, ?, ?)""",
-                   (scenario_id, data['rank_id'], data.get('description', ''),
-                    data.get('workstream_id'), max_order + 1))
-        db.commit()
-    finally:
-        db.close()
+    max_order = db.execute("SELECT COALESCE(MAX(sort_order),0) FROM ranks WHERE scenario_id=?",
+                           (scenario_id,)).fetchone()[0]
+    db.execute("""INSERT INTO ranks (scenario_id, rank_id, description, workstream_id, sort_order)
+                  VALUES (?, ?, ?, ?, ?)""",
+               (scenario_id, data['rank_id'], data.get('description', ''),
+                data.get('workstream_id'), max_order + 1))
+    db.commit()
     return jsonify({"ok": True}), 201
 
 
@@ -214,7 +245,6 @@ def update_rank(id):
                (data['rank_id'], data.get('description', ''),
                 data.get('workstream_id'), data.get('sort_order', 0), id))
     db.commit()
-    db.close()
     return jsonify({"ok": True})
 
 
@@ -223,7 +253,6 @@ def delete_rank(id):
     db = get_db()
     db.execute("DELETE FROM ranks WHERE id=?", (id,))
     db.commit()
-    db.close()
     return jsonify({"ok": True})
 
 
@@ -238,9 +267,7 @@ def import_csv():
     if not file.filename:
         return jsonify({"error": "No file selected"}), 400
 
-    # Derive scenario name from filename (without extension and suffix like -b)
     base_name = os.path.splitext(file.filename)[0]
-    # Remove suffixes like -b, -c etc. to get the Jira key
     scenario_name = re.sub(r'-[a-zA-Z]$', '', base_name)
 
     try:
@@ -250,12 +277,10 @@ def import_csv():
         header = [h.strip() for h in header]
         logger.info("CSV import: file=%s, columns=%s", file.filename, header)
 
-        # Find column indices
         col_map = {h.lower(): i for i, h in enumerate(header)}
         test_key_idx = col_map.get('test key')
         status_idx = col_map.get('status')
         executed_by_idx = col_map.get('executed by')
-        assignee_idx = col_map.get('assignee')
 
         if test_key_idx is None:
             return jsonify({"error": "CSV must have a 'Test Key' column"}), 400
@@ -264,71 +289,59 @@ def import_csv():
         logger.info("CSV import: %d rows found", len(rows))
 
         db = get_db()
-        try:
-            # Create scenario (or find existing)
-            existing = db.execute("SELECT id FROM scenarios WHERE name=?", (scenario_name,)).fetchone()
-            if existing:
-                scenario_id = existing['id']
-            else:
-                c = db.execute("INSERT INTO scenarios (name) VALUES (?)", (scenario_name,))
-                scenario_id = c.lastrowid
+        existing = db.execute("SELECT id FROM scenarios WHERE name=?", (scenario_name,)).fetchone()
+        if existing:
+            scenario_id = existing['id']
+        else:
+            c = db.execute("INSERT INTO scenarios (name) VALUES (?)", (scenario_name,))
+            scenario_id = c.lastrowid
 
-            # Workstream cache: prefix -> workstream_id
-            ws_cache = {}
-            for ws in db.execute("SELECT id, name FROM workstreams").fetchall():
-                ws_cache[ws['name']] = ws['id']
+        ws_cache = {}
+        for ws in db.execute("SELECT id, name FROM workstreams").fetchall():
+            ws_cache[ws['name']] = ws['id']
 
-            imported = 0
-            for i, row in enumerate(rows):
-                if len(row) <= test_key_idx:
-                    continue
-                test_key = row[test_key_idx].strip()
-                if not test_key:
-                    continue
+        imported = 0
+        for i, row in enumerate(rows):
+            if len(row) <= test_key_idx:
+                continue
+            test_key = row[test_key_idx].strip()
+            if not test_key:
+                continue
 
-                # Extract workstream prefix from Jira key (e.g. OFCON-6840 -> OFCON)
-                prefix_match = re.match(r'^([A-Za-z]+)-', test_key)
-                ws_name = prefix_match.group(1) if prefix_match else ''
+            prefix_match = re.match(r'^([A-Za-z]+)-', test_key)
+            ws_name = prefix_match.group(1) if prefix_match else ''
 
-                # Get or create workstream
-                ws_id = None
-                if ws_name:
-                    if ws_name not in ws_cache:
-                        c = db.execute("INSERT INTO workstreams (name) VALUES (?)", (ws_name,))
-                        ws_cache[ws_name] = c.lastrowid
-                    ws_id = ws_cache[ws_name]
+            ws_id = None
+            if ws_name:
+                if ws_name not in ws_cache:
+                    c = db.execute("INSERT INTO workstreams (name) VALUES (?)", (ws_name,))
+                    ws_cache[ws_name] = c.lastrowid
+                ws_id = ws_cache[ws_name]
 
-                # Build description from status and executor
-                desc_parts = []
-                if status_idx is not None and len(row) > status_idx:
-                    status = row[status_idx].strip()
-                    if status:
-                        desc_parts.append(status)
-                if executed_by_idx is not None and len(row) > executed_by_idx:
-                    executor = row[executed_by_idx].strip()
-                    if executor:
-                        desc_parts.append(executor)
-                description = ' | '.join(desc_parts)
+            desc_parts = []
+            if status_idx is not None and len(row) > status_idx:
+                status = row[status_idx].strip()
+                if status:
+                    desc_parts.append(status)
+            if executed_by_idx is not None and len(row) > executed_by_idx:
+                executor = row[executed_by_idx].strip()
+                if executor:
+                    desc_parts.append(executor)
+            description = ' | '.join(desc_parts)
 
-                db.execute("""INSERT INTO ranks (scenario_id, rank_id, description, workstream_id, sort_order, jira_key)
-                              VALUES (?, ?, ?, ?, ?, ?)""",
-                           (scenario_id, test_key, description, ws_id, i + 1, test_key))
-                imported += 1
+            db.execute("""INSERT INTO ranks (scenario_id, rank_id, description, workstream_id, sort_order, jira_key)
+                          VALUES (?, ?, ?, ?, ?, ?)""",
+                       (scenario_id, test_key, description, ws_id, i + 1, test_key))
+            imported += 1
 
-            db.commit()
-            logger.info("CSV import: scenario=%s (id=%d), %d ranks imported", scenario_name, scenario_id, imported)
-            return jsonify({
-                "ok": True,
-                "scenario_id": scenario_id,
-                "scenario_name": scenario_name,
-                "imported": imported
-            }), 201
-
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        db.commit()
+        logger.info("CSV import: scenario=%s (id=%d), %d ranks imported", scenario_name, scenario_id, imported)
+        return jsonify({
+            "ok": True,
+            "scenario_id": scenario_id,
+            "scenario_name": scenario_name,
+            "imported": imported
+        }), 201
 
     except Exception as e:
         logger.exception("CSV import failed: %s", e)
@@ -346,7 +359,6 @@ def get_sessions():
         JOIN scenarios sc ON s.scenario_id = sc.id
         ORDER BY s.started_at DESC
     """).fetchall()
-    db.close()
     return jsonify([dict(r) for r in rows])
 
 
@@ -354,15 +366,12 @@ def get_sessions():
 def create_session():
     data = request.json
     db = get_db()
-    try:
-        now = datetime.utcnow().isoformat()
-        c = db.execute("INSERT INTO sessions (scenario_id, name, started_at) VALUES (?, ?, ?)",
-                       (data['scenario_id'], data.get('name', ''), now))
-        db.commit()
-        session_id = c.lastrowid
-    finally:
-        db.close()
-    return jsonify({"ok": True, "id": session_id, "started_at": now}), 201
+    now = datetime.utcnow().isoformat()
+    scenario_id = data['scenario_id']
+    c = db.execute("INSERT INTO sessions (scenario_id, name, started_at) VALUES (?, ?, ?)",
+                   (scenario_id, data.get('name', ''), now))
+    db.commit()
+    return jsonify({"ok": True, "id": c.lastrowid, "scenario_id": scenario_id, "started_at": now}), 201
 
 
 @app.route('/api/sessions/<int:id>/end', methods=['POST'])
@@ -371,7 +380,6 @@ def end_session(id):
     now = datetime.utcnow().isoformat()
     db.execute("UPDATE sessions SET ended_at=? WHERE id=?", (now, id))
     db.commit()
-    db.close()
     return jsonify({"ok": True})
 
 
@@ -391,7 +399,6 @@ def get_entries(session_id):
         WHERE te.session_id = ?
         ORDER BY te.seq_order
     """, (session_id,)).fetchall()
-    db.close()
     return jsonify([dict(r) for r in rows])
 
 
@@ -399,19 +406,15 @@ def get_entries(session_id):
 def create_entry(session_id):
     data = request.json
     db = get_db()
-    try:
-        max_seq = db.execute("SELECT COALESCE(MAX(seq_order),0) FROM time_entries WHERE session_id=?",
-                             (session_id,)).fetchone()[0]
-        now = datetime.utcnow().isoformat()
-        c = db.execute("""INSERT INTO time_entries
-                          (session_id, rank_id, activity_type_id, started_at, seq_order)
-                          VALUES (?, ?, ?, ?, ?)""",
-                       (session_id, data['rank_id'], data['activity_type_id'], now, max_seq + 1))
-        db.commit()
-        entry_id = c.lastrowid
-    finally:
-        db.close()
-    return jsonify({"ok": True, "id": entry_id, "started_at": now}), 201
+    max_seq = db.execute("SELECT COALESCE(MAX(seq_order),0) FROM time_entries WHERE session_id=?",
+                         (session_id,)).fetchone()[0]
+    now = datetime.utcnow().isoformat()
+    c = db.execute("""INSERT INTO time_entries
+                      (session_id, rank_id, activity_type_id, started_at, seq_order)
+                      VALUES (?, ?, ?, ?, ?)""",
+                   (session_id, data['rank_id'], data['activity_type_id'], now, max_seq + 1))
+    db.commit()
+    return jsonify({"ok": True, "id": c.lastrowid, "started_at": now}), 201
 
 
 @app.route('/api/entries/<int:id>', methods=['PUT'])
@@ -436,7 +439,6 @@ def update_entry(id):
         params.append(id)
         db.execute(f"UPDATE time_entries SET {', '.join(updates)} WHERE id=?", params)
         db.commit()
-    db.close()
     return jsonify({"ok": True})
 
 
@@ -445,7 +447,6 @@ def delete_entry(id):
     db = get_db()
     db.execute("DELETE FROM time_entries WHERE id=?", (id,))
     db.commit()
-    db.close()
     return jsonify({"ok": True})
 
 
@@ -455,7 +456,6 @@ def delete_entry(id):
 def session_statistics(session_id):
     db = get_db()
 
-    # Time by activity type
     by_activity = db.execute("""
         SELECT at.name, at.color, SUM(te.duration_seconds) as total_seconds, COUNT(*) as count
         FROM time_entries te
@@ -465,7 +465,6 @@ def session_statistics(session_id):
         ORDER BY total_seconds DESC
     """, (session_id,)).fetchall()
 
-    # Time by workstream
     by_workstream = db.execute("""
         SELECT COALESCE(w.name, 'Unassigned') as name, SUM(te.duration_seconds) as total_seconds, COUNT(*) as count
         FROM time_entries te
@@ -476,7 +475,6 @@ def session_statistics(session_id):
         ORDER BY total_seconds DESC
     """, (session_id,)).fetchall()
 
-    # Time by rank
     by_rank = db.execute("""
         SELECT r.rank_id, r.description, COALESCE(w.name, '') as workstream_name,
                SUM(te.duration_seconds) as total_seconds, COUNT(*) as count
@@ -488,7 +486,6 @@ def session_statistics(session_id):
         ORDER BY r.sort_order
     """, (session_id,)).fetchall()
 
-    # Waste time (non-execution activities) by workstream
     waste_by_workstream = db.execute("""
         SELECT COALESCE(w.name, 'Unassigned') as name,
                at.name as activity_name, at.color,
@@ -503,7 +500,6 @@ def session_statistics(session_id):
         ORDER BY w.name, total_seconds DESC
     """, (session_id,)).fetchall()
 
-    db.close()
     return jsonify({
         "by_activity": [dict(r) for r in by_activity],
         "by_workstream": [dict(r) for r in by_workstream],
@@ -521,5 +517,13 @@ def handle_error(e):
 if __name__ == '__main__':
     logger.info("Initializing database...")
     init_db()
-    logger.info("Starting TestWatch on http://127.0.0.1:5050")
-    app.run(debug=True, port=5050)
+
+    from waitress import serve
+    port = int(os.environ.get('TW_PORT', 5050))
+    source_hash = _source_fingerprint()
+    logger.info("Starting TestWatch v%s on http://127.0.0.1:%d (waitress) [hash=%s, pid=%d]",
+                APP_VERSION, port, source_hash, os.getpid())
+    print(f"\n  TestWatch v{APP_VERSION} running at http://127.0.0.1:{port}")
+    print(f"  Source hash: {source_hash} | PID: {os.getpid()}")
+    print(f"  Verify: http://127.0.0.1:{port}/api/health\n")
+    serve(app, host='127.0.0.1', port=port, threads=4)

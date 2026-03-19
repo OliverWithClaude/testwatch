@@ -67,6 +67,16 @@ body {
 }
 .session-bar-right { display: flex; align-items: center; gap: 0.5rem; }
 
+/* === Server Alert Bar === */
+.server-alert-bar {
+    padding: 0.5rem 2rem;
+    text-align: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+.server-alert-bar.alert-warn { background: #fff3e0; color: #e65100; }
+.server-alert-bar.alert-error { background: #ffebee; color: #c62828; }
+
 /* === Content === */
 .content { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
 
