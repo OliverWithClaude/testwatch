@@ -23,6 +23,12 @@ logger = logging.getLogger('testwatch')
 
 app = Flask(__name__)
 
+
+@app.before_request
+def log_request():
+    logger.info("Request: %s %s", request.method, request.path)
+
+
 # --- Pages ---
 
 @app.route('/')
@@ -516,4 +522,4 @@ if __name__ == '__main__':
     logger.info("Initializing database...")
     init_db()
     logger.info("Starting TestWatch on http://127.0.0.1:5050")
-    app.run(debug=True, port=5050, use_reloader=False)
+    app.run(debug=True, port=5050)

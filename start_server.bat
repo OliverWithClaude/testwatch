@@ -24,6 +24,10 @@ if errorlevel 1 (
 )
 
 echo.
+echo Clearing Python cache...
+if exist __pycache__ rmdir /s /q __pycache__
+
+echo.
 echo Starting TestWatch...
 echo Open your browser at: http://127.0.0.1:5050
 echo.
