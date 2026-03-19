@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Scenario Preparation{% endblock %}
+{% block content %}
+<div class="preparation-page">
+    <h2>Scenario Preparation</h2>
+
+    <div class="form-row">
+        <label>Select Scenario:</label>
+        <select id="scenario-select" onchange="loadRanks()">
+            <option value="">-- Select --</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" onclick="newScenario()">+ New Scenario</button>
+    </div>
+
+    <div id="ranks-section" style="display:none;">
+        <h3>Ranks / Test Steps</h3>
+
+        <div class="card">
+            <table class="table" id="ranks-table">
+                <thead>
+                    <tr>
+                        <th>Order</th>
+                        <th>Rank ID</th>
+                        <th>Description</th>
+                        <th>Workstream</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="ranks-body"></tbody>
+            </table>
+        </div>
+
+        <div class="card add-rank-form">
+            <h4>Add Rank</h4>
+            <div class="form-row">
+                <input type="text" id="new-rank-id" placeholder="Rank ID (e.g. R001)">
+                <input type="text" id="new-rank-desc" placeholder="Description">
+                <select id="new-rank-ws"></select>
+                <button class="btn btn-primary" onclick="addRank()">Add</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let workstreams = [];
+
+document.addEventListener('DOMContentLoaded', async () => {
+    const scenarios = await (await fetch('/api/scenarios')).json();
+    const sel = document.getElementById('scenario-select');
+    sel.innerHTML = '<option value="">-- Select --</option>' +
+        scenarios.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+
+    workstreams = await (await fetch('/api/workstreams')).json();
+    const wsSel = document.getElementById('new-rank-ws');
+    wsSel.innerHTML = '<option value="">-- None --</option>' +
+        workstreams.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+});
+
+async function loadRanks() {
+    const scenarioId = document.getElementById('scenario-select').value;
+    if (!scenarioId) { document.getElementById('ranks-section').style.display = 'none'; return; }
+    document.getElementById('ranks-section').style.display = 'block';
+
+    const ranks = await (await fetch(`/api/scenarios/${scenarioId}/ranks`)).json();
+    const tbody = document.getElementById('ranks-body');
+    tbody.innerHTML = ranks.map((r, i) => `
+        <tr>
+            <td>${i + 1}</td>
+            <td>${r.rank_id}</td>
+            <td>${r.description}</td>
+            <td>${r.workstream_name || '-'}</td>
+            <td>
+                <button class="btn btn-sm btn-danger" onclick="deleteRank(${r.id})">Delete</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function addRank() {
+    const scenarioId = document.getElementById('scenario-select').value;
+    const rankId = document.getElementById('new-rank-id').value.trim();
+    const desc = document.getElementById('new-rank-desc').value.trim();
+    const wsId = document.getElementById('new-rank-ws').value;
+    if (!rankId) return alert('Rank ID is required');
+
+    await fetch(`/api/scenarios/${scenarioId}/ranks`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({rank_id: rankId, description: desc, workstream_id: wsId ? parseInt(wsId) : null})
+    });
+    document.getElementById('new-rank-id').value = '';
+    document.getElementById('new-rank-desc').value = '';
+    await loadRanks();
+}
+
+async function deleteRank(id) {
+    if (!confirm('Delete this rank?')) return;
+    await fetch(`/api/ranks/${id}`, {method: 'DELETE'});
+    await loadRanks();
+}
+
+async function newScenario() {
+    const name = prompt('Scenario name (e.g. "94.0 Remarketing"):');
+    if (!name) return;
+    await fetch('/api/scenarios', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name})
+    });
+    location.reload();
+}
+</script>
+{% endblock %}

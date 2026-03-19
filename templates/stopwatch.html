@@ -1,0 +1,337 @@
+{% extends "base.html" %}
+{% block title %}Stopwatch{% endblock %}
+{% block content %}
+<div class="stopwatch-page">
+    <!-- Session Setup -->
+    <div id="session-setup" class="card">
+        <h2>Start a Testing Session</h2>
+        <div class="form-row">
+            <label>Scenario:</label>
+            <select id="scenario-select"></select>
+        </div>
+        <div class="form-row">
+            <label>Session Name (optional):</label>
+            <input type="text" id="session-name" placeholder="e.g. Day 3 Morning">
+        </div>
+        <button class="btn btn-primary" onclick="startSession()">Start Session</button>
+        <hr>
+        <h3>Or resume a session</h3>
+        <select id="resume-session-select"></select>
+        <button class="btn btn-secondary" onclick="resumeSession()">Resume</button>
+    </div>
+
+    <!-- Active Session -->
+    <div id="active-session" style="display:none;">
+        <div class="session-header">
+            <h2 id="session-title"></h2>
+            <div class="timer-display">
+                <span id="timer">00:00:00</span>
+            </div>
+            <button class="btn btn-danger" onclick="endSession()">End Session</button>
+        </div>
+
+        <!-- Current Activity Controls -->
+        <div class="card activity-controls">
+            <div class="controls-row">
+                <div class="control-group">
+                    <label>Current Activity Type:</label>
+                    <div id="activity-type-buttons" class="activity-buttons"></div>
+                </div>
+                <div class="control-group">
+                    <label>Current Rank:</label>
+                    <select id="rank-select" class="rank-select"></select>
+                </div>
+            </div>
+            <div class="controls-row center">
+                <button id="next-btn" class="btn btn-primary btn-xl" onclick="nextActivity()">
+                    Next Activity
+                </button>
+                <div id="current-activity-info" class="current-info">
+                    No activity running
+                </div>
+            </div>
+        </div>
+
+        <!-- Timeline / Execution Log -->
+        <div class="card">
+            <h3>Execution Log</h3>
+            <div id="timeline" class="timeline"></div>
+        </div>
+
+        <!-- Rank Table with inline timelines -->
+        <div class="card">
+            <h3>Rank Overview</h3>
+            <div id="rank-table" class="rank-table"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentSession = null;
+let currentEntryId = null;
+let currentEntryStart = null;
+let timerInterval = null;
+let activityTypes = [];
+let ranks = [];
+let entries = [];
+let selectedActivityTypeId = null;
+let selectedRankId = null;
+
+// --- Init ---
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadScenarios();
+    await loadSessions();
+    activityTypes = await fetchJson('/api/activity-types');
+});
+
+async function fetchJson(url, opts) {
+    const r = await fetch(url, opts);
+    return r.json();
+}
+
+async function loadScenarios() {
+    const scenarios = await fetchJson('/api/scenarios');
+    const sel = document.getElementById('scenario-select');
+    sel.innerHTML = scenarios.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+}
+
+async function loadSessions() {
+    const sessions = await fetchJson('/api/sessions');
+    const sel = document.getElementById('resume-session-select');
+    const active = sessions.filter(s => !s.ended_at);
+    sel.innerHTML = active.length
+        ? active.map(s => `<option value="${s.id}">${s.scenario_name} - ${s.name || s.started_at}</option>`).join('')
+        : '<option value="">No active sessions</option>';
+}
+
+// --- Session Management ---
+async function startSession() {
+    const scenarioId = document.getElementById('scenario-select').value;
+    const name = document.getElementById('session-name').value;
+    if (!scenarioId) return alert('Select a scenario');
+    const data = await fetchJson('/api/sessions', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({scenario_id: parseInt(scenarioId), name})
+    });
+    currentSession = {id: data.id, scenario_id: parseInt(scenarioId)};
+    await activateSession(parseInt(scenarioId));
+}
+
+async function resumeSession() {
+    const sessionId = document.getElementById('resume-session-select').value;
+    if (!sessionId) return;
+    const sessions = await fetchJson('/api/sessions');
+    const session = sessions.find(s => s.id === parseInt(sessionId));
+    if (!session) return;
+    currentSession = {id: session.id, scenario_id: session.scenario_id};
+    await activateSession(session.scenario_id);
+    // Load existing entries
+    entries = await fetchJson(`/api/sessions/${currentSession.id}/entries`);
+    renderTimeline();
+    renderRankTable();
+}
+
+async function activateSession(scenarioId) {
+    document.getElementById('session-setup').style.display = 'none';
+    document.getElementById('active-session').style.display = 'block';
+    document.getElementById('session-title').textContent = `Session #${currentSession.id}`;
+
+    // Load ranks for this scenario
+    ranks = await fetchJson(`/api/scenarios/${scenarioId}/ranks`);
+    const rankSel = document.getElementById('rank-select');
+    rankSel.innerHTML = ranks.map(r =>
+        `<option value="${r.id}">${r.rank_id} - ${r.description} [${r.workstream_name || '?'}]</option>`
+    ).join('');
+    if (ranks.length > 0) selectedRankId = ranks[0].id;
+    rankSel.onchange = () => { selectedRankId = parseInt(rankSel.value); updateCurrentEntry(); };
+
+    // Activity type buttons
+    renderActivityButtons();
+    if (activityTypes.length > 0) selectedActivityTypeId = activityTypes[0].id;
+
+    entries = await fetchJson(`/api/sessions/${currentSession.id}/entries`);
+    renderTimeline();
+    renderRankTable();
+}
+
+function renderActivityButtons() {
+    const container = document.getElementById('activity-type-buttons');
+    container.innerHTML = activityTypes.map(at => `
+        <button class="activity-btn ${at.id === selectedActivityTypeId ? 'selected' : ''}"
+                style="background-color: ${at.color}; color: white;"
+                onclick="selectActivityType(${at.id})"
+                title="${at.name}">
+            ${at.name}
+        </button>
+    `).join('');
+}
+
+function selectActivityType(id) {
+    selectedActivityTypeId = id;
+    renderActivityButtons();
+    updateCurrentEntry();
+}
+
+async function updateCurrentEntry() {
+    if (!currentEntryId) return;
+    await fetch(`/api/entries/${currentEntryId}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            rank_id: selectedRankId,
+            activity_type_id: selectedActivityTypeId
+        })
+    });
+}
+
+// --- Timer ---
+function startTimer() {
+    currentEntryStart = new Date();
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(updateTimerDisplay, 100);
+}
+
+function updateTimerDisplay() {
+    if (!currentEntryStart) return;
+    const elapsed = (new Date() - currentEntryStart) / 1000;
+    const h = Math.floor(elapsed / 3600);
+    const m = Math.floor((elapsed % 3600) / 60);
+    const s = Math.floor(elapsed % 60);
+    document.getElementById('timer').textContent =
+        `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+// --- Next Activity ---
+async function nextActivity() {
+    // 1. Close current entry if any
+    if (currentEntryId) {
+        const now = new Date().toISOString();
+        const duration = (new Date() - currentEntryStart) / 1000;
+        await fetch(`/api/entries/${currentEntryId}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ended_at: now, duration_seconds: duration})
+        });
+
+        // Add to local entries for display
+        const at = activityTypes.find(a => a.id === selectedActivityTypeId);
+        const rank = ranks.find(r => r.id === selectedRankId);
+        entries.push({
+            id: currentEntryId,
+            rank_id: selectedRankId,
+            rank_label: rank ? rank.rank_id : '?',
+            rank_description: rank ? rank.description : '',
+            workstream_name: rank ? rank.workstream_name : '',
+            activity_type_id: selectedActivityTypeId,
+            activity_name: at ? at.name : '?',
+            activity_color: at ? at.color : '#999',
+            started_at: currentEntryStart.toISOString(),
+            ended_at: now,
+            duration_seconds: duration
+        });
+    }
+
+    // 2. Create new entry
+    if (!selectedRankId || !selectedActivityTypeId) {
+        alert('Select a rank and activity type');
+        return;
+    }
+    const data = await fetchJson(`/api/sessions/${currentSession.id}/entries`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({rank_id: selectedRankId, activity_type_id: selectedActivityTypeId})
+    });
+    currentEntryId = data.id;
+    startTimer();
+
+    const at = activityTypes.find(a => a.id === selectedActivityTypeId);
+    document.getElementById('current-activity-info').innerHTML =
+        `<span class="badge" style="background:${at.color}">${at.name}</span> running...`;
+
+    renderTimeline();
+    renderRankTable();
+}
+
+async function endSession() {
+    // Close current entry
+    if (currentEntryId) {
+        const now = new Date().toISOString();
+        const duration = (new Date() - currentEntryStart) / 1000;
+        await fetch(`/api/entries/${currentEntryId}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ended_at: now, duration_seconds: duration})
+        });
+    }
+    await fetch(`/api/sessions/${currentSession.id}/end`, {method: 'POST'});
+    clearInterval(timerInterval);
+    currentSession = null;
+    currentEntryId = null;
+    document.getElementById('active-session').style.display = 'none';
+    document.getElementById('session-setup').style.display = 'block';
+    await loadSessions();
+}
+
+// --- Rendering ---
+function renderTimeline() {
+    const container = document.getElementById('timeline');
+    if (entries.length === 0) {
+        container.innerHTML = '<div class="empty">No entries yet. Click "Next Activity" to start.</div>';
+        return;
+    }
+    const maxDuration = Math.max(...entries.filter(e => e.duration_seconds > 0).map(e => e.duration_seconds), 1);
+    container.innerHTML = entries.filter(e => e.duration_seconds > 0).map(e => {
+        const widthPct = Math.max(2, (e.duration_seconds / maxDuration) * 100);
+        const mins = (e.duration_seconds / 60).toFixed(1);
+        return `<div class="timeline-entry" style="width:${widthPct}%; background:${e.activity_color};"
+                     title="${e.activity_name} | ${e.rank_label} | ${mins}m">
+            <span class="timeline-label">${e.rank_label} ${mins}m</span>
+        </div>`;
+    }).join('');
+}
+
+function renderRankTable() {
+    const container = document.getElementById('rank-table');
+    if (ranks.length === 0) {
+        container.innerHTML = '<div class="empty">No ranks in this scenario.</div>';
+        return;
+    }
+
+    const maxDuration = Math.max(...entries.filter(e => e.duration_seconds > 0).map(e => e.duration_seconds), 1);
+
+    container.innerHTML = `<table class="table">
+        <thead>
+            <tr>
+                <th>Rank</th>
+                <th>Description</th>
+                <th>Workstream</th>
+                <th>Timeline</th>
+                <th>Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${ranks.map(r => {
+                const rankEntries = entries.filter(e => e.rank_id === r.id && e.duration_seconds > 0);
+                const totalSec = rankEntries.reduce((s, e) => s + e.duration_seconds, 0);
+                const totalMin = (totalSec / 60).toFixed(1);
+                const boxes = rankEntries.map(e => {
+                    const w = Math.max(4, (e.duration_seconds / maxDuration) * 200);
+                    return `<div class="rank-box" style="width:${w}px; background:${e.activity_color};"
+                                 title="${e.activity_name}: ${(e.duration_seconds/60).toFixed(1)}m"></div>`;
+                }).join('');
+                return `<tr class="${selectedRankId === r.id ? 'selected-rank' : ''}">
+                    <td class="rank-id">${r.rank_id}</td>
+                    <td>${r.description}</td>
+                    <td><span class="ws-badge">${r.workstream_name || '-'}</span></td>
+                    <td><div class="rank-timeline">${boxes || '<span class="muted">-</span>'}</div></td>
+                    <td>${totalMin}m</td>
+                </tr>`;
+            }).join('')}
+        </tbody>
+    </table>`;
+}
+</script>
+{% endblock %}

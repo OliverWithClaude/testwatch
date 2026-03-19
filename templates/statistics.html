@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}Statistics{% endblock %}
+{% block content %}
+<div class="statistics-page">
+    <h2>Session Statistics</h2>
+    <div class="form-row">
+        <label>Select Session:</label>
+        <select id="session-select" onchange="loadStats()"></select>
+    </div>
+
+    <div id="stats-content" style="display:none;">
+        <!-- Summary Cards -->
+        <div class="stats-summary" id="summary-cards"></div>
+
+        <div class="charts-grid">
+            <!-- Time by Activity Type - Pie -->
+            <div class="card chart-card">
+                <h3>Time by Activity Type</h3>
+                <canvas id="chart-activity-pie"></canvas>
+            </div>
+
+            <!-- Time by Activity Type - Bar -->
+            <div class="card chart-card">
+                <h3>Time Breakdown (minutes)</h3>
+                <canvas id="chart-activity-bar"></canvas>
+            </div>
+
+            <!-- Time by Workstream -->
+            <div class="card chart-card">
+                <h3>Time by Workstream</h3>
+                <canvas id="chart-workstream"></canvas>
+            </div>
+
+            <!-- Time by Rank -->
+            <div class="card chart-card">
+                <h3>Time by Rank</h3>
+                <canvas id="chart-rank"></canvas>
+            </div>
+
+            <!-- Waste by Workstream - Stacked Bar -->
+            <div class="card chart-card wide">
+                <h3>Non-Execution Time by Workstream (Waste Analysis)</h3>
+                <canvas id="chart-waste"></canvas>
+            </div>
+
+            <!-- Execution vs Waiting -->
+            <div class="card chart-card">
+                <h3>Productive vs. Waiting Time</h3>
+                <canvas id="chart-productive"></canvas>
+            </div>
+        </div>
+
+        <!-- Recommendations -->
+        <div class="card" id="recommendations">
+            <h3>Recommendations per Workstream</h3>
+            <div id="recommendations-content"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let charts = {};
+
+document.addEventListener('DOMContentLoaded', loadSessions);
+
+async function loadSessions() {
+    const sessions = await (await fetch('/api/sessions')).json();
+    const sel = document.getElementById('session-select');
+    sel.innerHTML = '<option value="">-- Select --</option>' +
+        sessions.map(s => `<option value="${s.id}">${s.scenario_name} - ${s.name || s.started_at}${s.ended_at ? ' (ended)' : ' (active)'}</option>`).join('');
+}
+
+async function loadStats() {
+    const sessionId = document.getElementById('session-select').value;
+    if (!sessionId) { document.getElementById('stats-content').style.display='none'; return; }
+
+    const stats = await (await fetch(`/api/statistics/session/${sessionId}`)).json();
+    document.getElementById('stats-content').style.display = 'block';
+
+    // Summary
+    const totalSec = stats.by_activity.reduce((s, a) => s + a.total_seconds, 0);
+    const execSec = stats.by_activity.find(a => a.name === 'Test execution')?.total_seconds || 0;
+    const waitSec = totalSec - execSec;
+    document.getElementById('summary-cards').innerHTML = `
+        <div class="stat-card"><div class="stat-value">${(totalSec/60).toFixed(0)}m</div><div class="stat-label">Total Time</div></div>
+        <div class="stat-card good"><div class="stat-value">${(execSec/60).toFixed(0)}m</div><div class="stat-label">Execution Time</div></div>
+        <div class="stat-card warn"><div class="stat-value">${(waitSec/60).toFixed(0)}m</div><div class="stat-label">Non-Execution</div></div>
+        <div class="stat-card"><div class="stat-value">${totalSec > 0 ? ((execSec/totalSec)*100).toFixed(0) : 0}%</div><div class="stat-label">Efficiency</div></div>
+    `;
+
+    // Destroy old charts
+    Object.values(charts).forEach(c => c.destroy());
+    charts = {};
+
+    // Activity Pie
+    charts.actPie = new Chart(document.getElementById('chart-activity-pie'), {
+        type: 'doughnut',
+        data: {
+            labels: stats.by_activity.map(a => a.name),
+            datasets: [{
+                data: stats.by_activity.map(a => (a.total_seconds / 60).toFixed(1)),
+                backgroundColor: stats.by_activity.map(a => a.color),
+            }]
+        },
+        options: { plugins: { legend: { position: 'bottom' } } }
+    });
+
+    // Activity Bar
+    charts.actBar = new Chart(document.getElementById('chart-activity-bar'), {
+        type: 'bar',
+        data: {
+            labels: stats.by_activity.map(a => a.name),
+            datasets: [{
+                label: 'Minutes',
+                data: stats.by_activity.map(a => (a.total_seconds / 60).toFixed(1)),
+                backgroundColor: stats.by_activity.map(a => a.color),
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            plugins: { legend: { display: false } },
+            scales: { x: { title: { display: true, text: 'Minutes' } } }
+        }
+    });
+
+    // Workstream Bar
+    charts.ws = new Chart(document.getElementById('chart-workstream'), {
+        type: 'bar',
+        data: {
+            labels: stats.by_workstream.map(a => a.name),
+            datasets: [{
+                label: 'Minutes',
+                data: stats.by_workstream.map(a => (a.total_seconds / 60).toFixed(1)),
+                backgroundColor: '#5C6BC0',
+            }]
+        },
+        options: { plugins: { legend: { display: false } }, scales: { y: { title: { display: true, text: 'Minutes' } } } }
+    });
+
+    // Rank Bar
+    charts.rank = new Chart(document.getElementById('chart-rank'), {
+        type: 'bar',
+        data: {
+            labels: stats.by_rank.map(r => `${r.rank_id} (${r.workstream_name})`),
+            datasets: [{
+                label: 'Minutes',
+                data: stats.by_rank.map(r => (r.total_seconds / 60).toFixed(1)),
+                backgroundColor: '#26A69A',
+            }]
+        },
+        options: { plugins: { legend: { display: false } }, scales: { y: { title: { display: true, text: 'Minutes' } } } }
+    });
+
+    // Productive vs Waiting Doughnut
+    charts.prod = new Chart(document.getElementById('chart-productive'), {
+        type: 'doughnut',
+        data: {
+            labels: ['Test Execution', 'Other (Waiting/Breaks/etc.)'],
+            datasets: [{
+                data: [(execSec/60).toFixed(1), (waitSec/60).toFixed(1)],
+                backgroundColor: ['#4CAF50', '#FF7043'],
+            }]
+        },
+        options: { plugins: { legend: { position: 'bottom' } } }
+    });
+
+    // Waste by Workstream - Stacked
+    const wasteData = stats.waste_by_workstream;
+    const wsNames = [...new Set(wasteData.map(w => w.name))];
+    const actNames = [...new Set(wasteData.map(w => w.activity_name))];
+    const actColors = {};
+    wasteData.forEach(w => actColors[w.activity_name] = w.color);
+
+    charts.waste = new Chart(document.getElementById('chart-waste'), {
+        type: 'bar',
+        data: {
+            labels: wsNames,
+            datasets: actNames.map(act => ({
+                label: act,
+                data: wsNames.map(ws => {
+                    const entry = wasteData.find(w => w.name === ws && w.activity_name === act);
+                    return entry ? (entry.total_seconds / 60).toFixed(1) : 0;
+                }),
+                backgroundColor: actColors[act],
+            }))
+        },
+        options: {
+            plugins: { legend: { position: 'bottom' } },
+            scales: { x: { stacked: true }, y: { stacked: true, title: { display: true, text: 'Minutes' } } }
+        }
+    });
+
+    // Recommendations
+    generateRecommendations(stats);
+}
+
+function generateRecommendations(stats) {
+    const container = document.getElementById('recommendations-content');
+    const wsData = {};
+
+    stats.waste_by_workstream.forEach(w => {
+        if (!wsData[w.name]) wsData[w.name] = [];
+        wsData[w.name].push({activity: w.activity_name, seconds: w.total_seconds, color: w.color});
+    });
+
+    // Also include workstreams with only execution time
+    stats.by_workstream.forEach(w => {
+        if (!wsData[w.name]) wsData[w.name] = [];
+    });
+
+    let html = '';
+    for (const [ws, wasteItems] of Object.entries(wsData)) {
+        const wsTotal = stats.by_workstream.find(w => w.name === ws);
+        const totalMin = wsTotal ? (wsTotal.total_seconds / 60).toFixed(1) : 0;
+        const wasteMin = wasteItems.reduce((s, i) => s + i.seconds, 0) / 60;
+
+        html += `<div class="recommendation-card">
+            <h4>${ws}</h4>
+            <p>Total time: ${totalMin}m | Non-execution waste: ${wasteMin.toFixed(1)}m</p>`;
+
+        if (wasteItems.length === 0) {
+            html += `<p class="good-text">No significant waste detected.</p>`;
+        } else {
+            html += `<ul>`;
+            wasteItems.sort((a, b) => b.seconds - a.seconds);
+            wasteItems.forEach(item => {
+                const mins = (item.seconds / 60).toFixed(1);
+                let tip = '';
+                if (item.activity.includes('tester to join')) tip = 'Consider stricter scheduling or calendar blocks for testers.';
+                else if (item.activity.includes('tester') && item.activity.includes('ready')) tip = 'Ensure testers prepare test data and environment before the call.';
+                else if (item.activity.includes('defect') && item.activity.includes('Waiting')) tip = 'Identify blockers early; consider parallel testing of non-blocked ranks.';
+                else if (item.activity.includes('Creating a defect')) tip = 'Use defect templates to speed up defect creation.';
+                else if (item.activity.includes('expert')) tip = 'Pre-assign experts to be on standby during testing windows.';
+                else if (item.activity.includes('Unplanned break')) tip = 'Investigate root causes of unplanned breaks; consider buffer time.';
+                else if (item.activity.includes('Planned break')) tip = 'Align breaks across workstreams to minimize idle time.';
+                html += `<li><span class="badge" style="background:${item.color}">${item.activity}</span>
+                    ${mins}m ${tip ? '&mdash; <em>' + tip + '</em>' : ''}</li>`;
+            });
+            html += `</ul>`;
+        }
+        html += `</div>`;
+    }
+
+    container.innerHTML = html || '<p>No data available for recommendations.</p>';
+}
+</script>
+{% endblock %}

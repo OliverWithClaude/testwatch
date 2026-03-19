@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TestWatch - {% block title %}{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <nav class="main-nav">
+        <div class="nav-brand">TestWatch</div>
+        <div class="nav-links">
+            <a href="/stopwatch" class="{% if request.path == '/stopwatch' %}active{% endif %}">Stopwatch</a>
+            <a href="/statistics" class="{% if request.path == '/statistics' %}active{% endif %}">Statistics</a>
+            <a href="/preparation" class="{% if request.path == '/preparation' %}active{% endif %}">Preparation</a>
+            <a href="/admin" class="{% if request.path == '/admin' %}active{% endif %}">Admin</a>
+        </div>
+    </nav>
+    <main class="content">
+        {% block content %}{% endblock %}
+    </main>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

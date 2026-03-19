@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Admin{% endblock %}
+{% block content %}
+<div class="admin-page">
+    <h2>Administration</h2>
+
+    <div class="admin-grid">
+        <!-- Activity Types -->
+        <div class="card">
+            <h3>Activity Types</h3>
+            <table class="table" id="activity-types-table">
+                <thead><tr><th>Name</th><th>Color</th><th>Actions</th></tr></thead>
+                <tbody id="at-body"></tbody>
+            </table>
+            <div class="form-row">
+                <input type="text" id="new-at-name" placeholder="Activity name">
+                <input type="color" id="new-at-color" value="#FF6B6B">
+                <button class="btn btn-primary btn-sm" onclick="addActivityType()">Add</button>
+            </div>
+        </div>
+
+        <!-- Workstreams -->
+        <div class="card">
+            <h3>Workstreams</h3>
+            <table class="table" id="workstreams-table">
+                <thead><tr><th>Name</th><th>Actions</th></tr></thead>
+                <tbody id="ws-body"></tbody>
+            </table>
+            <div class="form-row">
+                <input type="text" id="new-ws-name" placeholder="Workstream name">
+                <button class="btn btn-primary btn-sm" onclick="addWorkstream()">Add</button>
+            </div>
+        </div>
+
+        <!-- Scenarios -->
+        <div class="card">
+            <h3>Scenarios</h3>
+            <table class="table" id="scenarios-table">
+                <thead><tr><th>Name</th><th>Actions</th></tr></thead>
+                <tbody id="sc-body"></tbody>
+            </table>
+            <div class="form-row">
+                <input type="text" id="new-sc-name" placeholder="Scenario name">
+                <button class="btn btn-primary btn-sm" onclick="addScenario()">Add</button>
+            </div>
+        </div>
+
+        <!-- Sessions -->
+        <div class="card">
+            <h3>Sessions</h3>
+            <table class="table" id="sessions-table">
+                <thead><tr><th>Scenario</th><th>Name</th><th>Started</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody id="sess-body"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    loadAll();
+});
+
+async function loadAll() {
+    await Promise.all([loadActivityTypes(), loadWorkstreams(), loadScenarios(), loadSessions()]);
+}
+
+async function loadActivityTypes() {
+    const data = await (await fetch('/api/activity-types')).json();
+    document.getElementById('at-body').innerHTML = data.map(at => `
+        <tr>
+            <td>${at.name}</td>
+            <td><span class="color-swatch" style="background:${at.color}"></span> ${at.color}</td>
+            <td>
+                <button class="btn btn-sm btn-outline" onclick="editActivityType(${at.id}, '${at.name.replace(/'/g,"\\'")}', '${at.color}')">Edit</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteActivityType(${at.id})">Delete</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function addActivityType() {
+    const name = document.getElementById('new-at-name').value.trim();
+    const color = document.getElementById('new-at-color').value;
+    if (!name) return;
+    await fetch('/api/activity-types', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, color})
+    });
+    document.getElementById('new-at-name').value = '';
+    await loadActivityTypes();
+}
+
+async function editActivityType(id, oldName, oldColor) {
+    const name = prompt('Activity name:', oldName);
+    if (!name) return;
+    const color = prompt('Color (hex):', oldColor);
+    if (!color) return;
+    await fetch(`/api/activity-types/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, color})
+    });
+    await loadActivityTypes();
+}
+
+async function deleteActivityType(id) {
+    if (!confirm('Delete this activity type?')) return;
+    await fetch(`/api/activity-types/${id}`, {method: 'DELETE'});
+    await loadActivityTypes();
+}
+
+async function loadWorkstreams() {
+    const data = await (await fetch('/api/workstreams')).json();
+    document.getElementById('ws-body').innerHTML = data.map(w => `
+        <tr>
+            <td>${w.name}</td>
+            <td><button class="btn btn-sm btn-danger" onclick="deleteWorkstream(${w.id})">Delete</button></td>
+        </tr>
+    `).join('');
+}
+
+async function addWorkstream() {
+    const name = document.getElementById('new-ws-name').value.trim();
+    if (!name) return;
+    await fetch('/api/workstreams', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name})
+    });
+    document.getElementById('new-ws-name').value = '';
+    await loadWorkstreams();
+}
+
+async function deleteWorkstream(id) {
+    if (!confirm('Delete this workstream?')) return;
+    await fetch(`/api/workstreams/${id}`, {method: 'DELETE'});
+    await loadWorkstreams();
+}
+
+async function loadScenarios() {
+    const data = await (await fetch('/api/scenarios')).json();
+    document.getElementById('sc-body').innerHTML = data.map(s => `
+        <tr>
+            <td>${s.name}</td>
+            <td>
+                <button class="btn btn-sm btn-outline" onclick="editScenario(${s.id}, '${s.name.replace(/'/g,"\\'")}')">Edit</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteScenario(${s.id})">Delete</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function addScenario() {
+    const name = document.getElementById('new-sc-name').value.trim();
+    if (!name) return;
+    await fetch('/api/scenarios', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name})
+    });
+    document.getElementById('new-sc-name').value = '';
+    await loadScenarios();
+}
+
+async function editScenario(id, oldName) {
+    const name = prompt('Scenario name:', oldName);
+    if (!name) return;
+    await fetch(`/api/scenarios/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name})
+    });
+    await loadScenarios();
+}
+
+async function deleteScenario(id) {
+    if (!confirm('Delete this scenario and all its ranks?')) return;
+    await fetch(`/api/scenarios/${id}`, {method: 'DELETE'});
+    await loadScenarios();
+}
+
+async function loadSessions() {
+    const data = await (await fetch('/api/sessions')).json();
+    document.getElementById('sess-body').innerHTML = data.map(s => `
+        <tr>
+            <td>${s.scenario_name}</td>
+            <td>${s.name || '-'}</td>
+            <td>${new Date(s.started_at).toLocaleString()}</td>
+            <td>${s.ended_at ? '<span class="badge-ended">Ended</span>' : '<span class="badge-active">Active</span>'}</td>
+            <td>
+                ${!s.ended_at ? `<button class="btn btn-sm btn-outline" onclick="endSession(${s.id})">End</button>` : ''}
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function endSession(id) {
+    await fetch(`/api/sessions/${id}/end`, {method: 'POST'});
+    await loadSessions();
+}
+</script>
+{% endblock %}
