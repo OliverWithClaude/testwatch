@@ -173,6 +173,16 @@ function selectActivityType(id) {
     selectedActivityTypeId = id;
     renderActivityButtons();
     updateCurrentEntry();
+    updateCurrentActivityInfo();
+}
+
+function updateCurrentActivityInfo() {
+    if (!currentEntryId) return;
+    const at = activityTypes.find(a => a.id === selectedActivityTypeId);
+    if (at) {
+        document.getElementById('current-activity-info').innerHTML =
+            `<span class="badge" style="background:${at.color}">${at.name}</span> running...`;
+    }
 }
 
 async function updateCurrentEntry() {
