@@ -29,9 +29,11 @@ During a testing session, you follow the ranks of your Jira test scenario. For e
 - Auto-generated recommendations per workstream
 
 ### Scenario Preparation
-- Create scenarios (e.g., "94.0 Remarketing", "91.5 YUC Sale")
+- **Import from Jira CSV** — upload a semicolon-separated test execution export; scenario name is derived from the filename, workstreams are auto-created from Jira project prefixes
+- Rank IDs link directly to Jira issues
+- Create scenarios manually (e.g., "94.0 Remarketing", "91.5 YUC Sale")
 - Define ranks with IDs, descriptions, and assigned workstreams
-- Pre-populate who is responsible for each rank
+- Scenario names are editable after import
 
 ### Admin
 - Manage activity types (name + color), fully customizable

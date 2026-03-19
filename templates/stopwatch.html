@@ -144,6 +144,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
+const JIRA_BASE_URL = 'https://atc.bmwgroup.net/jira/browse/';
+
 // --- Clock on stopwatch page ---
 function updatePageClock() {
     const el = document.getElementById('clock');
@@ -412,8 +414,11 @@ function renderRankTable() {
                     return `<div class="rank-box" style="width:${w}px; background:${e.activity_color};"
                                  title="${e.activity_name}: ${(e.duration_seconds/60).toFixed(1)}m"></div>`;
                 }).join('');
+                const jiraLink = r.jira_key
+                    ? `<a href="${JIRA_BASE_URL}${r.jira_key}" target="_blank" class="jira-link">${r.rank_id}</a>`
+                    : r.rank_id;
                 return `<tr class="${selectedRankId === r.id ? 'selected-rank' : ''}">
-                    <td class="rank-id">${r.rank_id}</td>
+                    <td class="rank-id">${jiraLink}</td>
                     <td>${r.description}</td>
                     <td><span class="ws-badge">${r.workstream_name || '-'}</span></td>
                     <td><div class="rank-timeline">${boxes || '<span class="muted">-</span>'}</div></td>

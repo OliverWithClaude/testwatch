@@ -68,6 +68,11 @@ def init_db():
         FOREIGN KEY (activity_type_id) REFERENCES activity_types(id) ON DELETE CASCADE
     )''')
 
+    # Migrate: add jira_key column to ranks if missing
+    cols = [row[1] for row in c.execute("PRAGMA table_info(ranks)").fetchall()]
+    if 'jira_key' not in cols:
+        c.execute("ALTER TABLE ranks ADD COLUMN jira_key TEXT DEFAULT ''")
+
     # Seed default activity types if empty
     existing = c.execute("SELECT COUNT(*) FROM activity_types").fetchone()[0]
     if existing == 0:

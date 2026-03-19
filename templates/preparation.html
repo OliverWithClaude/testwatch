@@ -4,6 +4,19 @@
 <div class="preparation-page">
     <h2>Scenario Preparation</h2>
 
+    <!-- Import Section -->
+    <div class="card">
+        <h3>Import from Jira CSV</h3>
+        <p class="hint">Export your test execution from Jira as CSV (semicolon-separated). The scenario name is taken from the filename, workstreams from the Jira project prefix.</p>
+        <div class="form-row">
+            <input type="file" id="csv-file" accept=".csv">
+            <button class="btn btn-primary" onclick="importCsv()">Import</button>
+        </div>
+        <div id="import-result"></div>
+    </div>
+
+    <hr>
+
     <div class="form-row">
         <label>Select Scenario:</label>
         <select id="scenario-select" onchange="loadRanks()">
@@ -19,8 +32,8 @@
             <table class="table" id="ranks-table">
                 <thead>
                     <tr>
-                        <th>Order</th>
-                        <th>Rank ID</th>
+                        <th>#</th>
+                        <th>Jira Key</th>
                         <th>Description</th>
                         <th>Workstream</th>
                         <th>Actions</th>
@@ -33,7 +46,7 @@
         <div class="card add-rank-form">
             <h4>Add Rank</h4>
             <div class="form-row">
-                <input type="text" id="new-rank-id" placeholder="Rank ID (e.g. R001)">
+                <input type="text" id="new-rank-id" placeholder="Rank ID (e.g. OFCON-1234)">
                 <input type="text" id="new-rank-desc" placeholder="Description">
                 <select id="new-rank-ws"></select>
                 <button class="btn btn-primary" onclick="addRank()">Add</button>
@@ -45,20 +58,55 @@
 
 {% block scripts %}
 <script>
+const JIRA_BASE_URL = 'https://atc.bmwgroup.net/jira/browse/';
 let workstreams = [];
 
 document.addEventListener('DOMContentLoaded', async () => {
-    const scenarios = await (await fetch('/api/scenarios')).json();
-    const sel = document.getElementById('scenario-select');
-    sel.innerHTML = '<option value="">-- Select --</option>' +
-        scenarios.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
-
+    await refreshScenarios();
     workstreams = await (await fetch('/api/workstreams')).json();
     const wsSel = document.getElementById('new-rank-ws');
     wsSel.innerHTML = '<option value="">-- None --</option>' +
         workstreams.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
 });
 
+async function refreshScenarios() {
+    const scenarios = await (await fetch('/api/scenarios')).json();
+    const sel = document.getElementById('scenario-select');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">-- Select --</option>' +
+        scenarios.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    if (current) sel.value = current;
+}
+
+// --- Import ---
+async function importCsv() {
+    const fileInput = document.getElementById('csv-file');
+    const resultDiv = document.getElementById('import-result');
+    if (!fileInput.files.length) { resultDiv.innerHTML = '<span class="error-text">Please select a file.</span>'; return; }
+
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+
+    resultDiv.innerHTML = '<span>Importing...</span>';
+    try {
+        const resp = await fetch('/api/import-csv', { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (!resp.ok) {
+            resultDiv.innerHTML = `<span class="error-text">Error: ${data.error}</span>`;
+            return;
+        }
+        resultDiv.innerHTML = `<span class="success-text">Imported ${data.imported} ranks into scenario "${data.scenario_name}"</span>`;
+        // Refresh and select the new scenario
+        await refreshScenarios();
+        workstreams = await (await fetch('/api/workstreams')).json();
+        document.getElementById('scenario-select').value = data.scenario_id;
+        await loadRanks();
+    } catch (e) {
+        resultDiv.innerHTML = `<span class="error-text">Import failed: ${e.message}</span>`;
+    }
+}
+
+// --- Ranks ---
 async function loadRanks() {
     const scenarioId = document.getElementById('scenario-select').value;
     if (!scenarioId) { document.getElementById('ranks-section').style.display = 'none'; return; }
@@ -66,17 +114,20 @@ async function loadRanks() {
 
     const ranks = await (await fetch(`/api/scenarios/${scenarioId}/ranks`)).json();
     const tbody = document.getElementById('ranks-body');
-    tbody.innerHTML = ranks.map((r, i) => `
-        <tr>
+    tbody.innerHTML = ranks.map((r, i) => {
+        const jiraLink = r.jira_key
+            ? `<a href="${JIRA_BASE_URL}${r.jira_key}" target="_blank" class="jira-link">${r.rank_id}</a>`
+            : r.rank_id;
+        return `<tr>
             <td>${i + 1}</td>
-            <td>${r.rank_id}</td>
+            <td class="rank-id">${jiraLink}</td>
             <td>${r.description}</td>
-            <td>${r.workstream_name || '-'}</td>
+            <td><span class="ws-badge">${r.workstream_name || '-'}</span></td>
             <td>
                 <button class="btn btn-sm btn-danger" onclick="deleteRank(${r.id})">Delete</button>
             </td>
-        </tr>
-    `).join('');
+        </tr>`;
+    }).join('');
 }
 
 async function addRank() {
@@ -110,7 +161,7 @@ async function newScenario() {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({name})
     });
-    location.reload();
+    await refreshScenarios();
 }
 </script>
 {% endblock %}

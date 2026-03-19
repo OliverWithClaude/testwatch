@@ -2,6 +2,10 @@ import logging
 import sys
 import os
 
+import csv
+import io
+import re
+
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from models import get_db, init_db
 from datetime import datetime
@@ -169,7 +173,7 @@ def delete_scenario(id):
 def get_ranks(scenario_id):
     db = get_db()
     rows = db.execute("""
-        SELECT r.*, w.name as workstream_name
+        SELECT r.*, w.name as workstream_name, r.jira_key
         FROM ranks r
         LEFT JOIN workstreams w ON r.workstream_id = w.id
         WHERE r.scenario_id = ?
@@ -215,6 +219,114 @@ def delete_rank(id):
     db.commit()
     db.close()
     return jsonify({"ok": True})
+
+
+# --- API: CSV Import ---
+
+@app.route('/api/import-csv', methods=['POST'])
+def import_csv():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files['file']
+    if not file.filename:
+        return jsonify({"error": "No file selected"}), 400
+
+    # Derive scenario name from filename (without extension and suffix like -b)
+    base_name = os.path.splitext(file.filename)[0]
+    # Remove suffixes like -b, -c etc. to get the Jira key
+    scenario_name = re.sub(r'-[a-zA-Z]$', '', base_name)
+
+    try:
+        raw = file.read().decode('utf-8-sig')
+        reader = csv.reader(io.StringIO(raw), delimiter=';')
+        header = next(reader)
+        header = [h.strip() for h in header]
+        logger.info("CSV import: file=%s, columns=%s", file.filename, header)
+
+        # Find column indices
+        col_map = {h.lower(): i for i, h in enumerate(header)}
+        test_key_idx = col_map.get('test key')
+        status_idx = col_map.get('status')
+        executed_by_idx = col_map.get('executed by')
+        assignee_idx = col_map.get('assignee')
+
+        if test_key_idx is None:
+            return jsonify({"error": "CSV must have a 'Test Key' column"}), 400
+
+        rows = list(reader)
+        logger.info("CSV import: %d rows found", len(rows))
+
+        db = get_db()
+        try:
+            # Create scenario (or find existing)
+            existing = db.execute("SELECT id FROM scenarios WHERE name=?", (scenario_name,)).fetchone()
+            if existing:
+                scenario_id = existing['id']
+            else:
+                c = db.execute("INSERT INTO scenarios (name) VALUES (?)", (scenario_name,))
+                scenario_id = c.lastrowid
+
+            # Workstream cache: prefix -> workstream_id
+            ws_cache = {}
+            for ws in db.execute("SELECT id, name FROM workstreams").fetchall():
+                ws_cache[ws['name']] = ws['id']
+
+            imported = 0
+            for i, row in enumerate(rows):
+                if len(row) <= test_key_idx:
+                    continue
+                test_key = row[test_key_idx].strip()
+                if not test_key:
+                    continue
+
+                # Extract workstream prefix from Jira key (e.g. OFCON-6840 -> OFCON)
+                prefix_match = re.match(r'^([A-Za-z]+)-', test_key)
+                ws_name = prefix_match.group(1) if prefix_match else ''
+
+                # Get or create workstream
+                ws_id = None
+                if ws_name:
+                    if ws_name not in ws_cache:
+                        c = db.execute("INSERT INTO workstreams (name) VALUES (?)", (ws_name,))
+                        ws_cache[ws_name] = c.lastrowid
+                    ws_id = ws_cache[ws_name]
+
+                # Build description from status and executor
+                desc_parts = []
+                if status_idx is not None and len(row) > status_idx:
+                    status = row[status_idx].strip()
+                    if status:
+                        desc_parts.append(status)
+                if executed_by_idx is not None and len(row) > executed_by_idx:
+                    executor = row[executed_by_idx].strip()
+                    if executor:
+                        desc_parts.append(executor)
+                description = ' | '.join(desc_parts)
+
+                db.execute("""INSERT INTO ranks (scenario_id, rank_id, description, workstream_id, sort_order, jira_key)
+                              VALUES (?, ?, ?, ?, ?, ?)""",
+                           (scenario_id, test_key, description, ws_id, i + 1, test_key))
+                imported += 1
+
+            db.commit()
+            logger.info("CSV import: scenario=%s (id=%d), %d ranks imported", scenario_name, scenario_id, imported)
+            return jsonify({
+                "ok": True,
+                "scenario_id": scenario_id,
+                "scenario_name": scenario_name,
+                "imported": imported
+            }), 201
+
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    except Exception as e:
+        logger.exception("CSV import failed: %s", e)
+        return jsonify({"error": str(e)}), 500
 
 
 # --- API: Sessions ---
