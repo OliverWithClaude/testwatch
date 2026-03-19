@@ -16,10 +16,27 @@
             <a href="/preparation" class="{% if request.path == '/preparation' %}active{% endif %}">Preparation</a>
             <a href="/admin" class="{% if request.path == '/admin' %}active{% endif %}">Admin</a>
         </div>
+        <div class="nav-clock" id="nav-clock"></div>
     </nav>
+
+    <!-- Persistent session bar — visible on all pages when a session is active -->
+    <div id="session-bar" class="session-bar" style="display:none;">
+        <div class="session-bar-left">
+            <span class="session-bar-label" id="bar-session-label"></span>
+            <span id="bar-activity-badge" class="badge">—</span>
+        </div>
+        <div class="session-bar-center">
+            <div class="bar-timer-display" id="bar-timer">00:00:00</div>
+        </div>
+        <div class="session-bar-right">
+            <a href="/stopwatch" class="btn btn-sm btn-primary">Open Stopwatch</a>
+        </div>
+    </div>
+
     <main class="content">
         {% block content %}{% endblock %}
     </main>
+    <script src="/static/session-bar.js"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

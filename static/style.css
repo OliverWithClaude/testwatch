@@ -36,6 +36,37 @@ body {
 .nav-links a:hover { color: white; background: rgba(255,255,255,0.1); }
 .nav-links a.active { color: white; background: #4fc3f7; }
 
+/* === Nav Clock === */
+.nav-clock {
+    margin-left: auto;
+    font-family: 'Courier New', monospace;
+    font-size: 1rem;
+    color: #4fc3f7;
+    letter-spacing: 1px;
+}
+
+/* === Persistent Session Bar === */
+.session-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #263238;
+    color: white;
+    padding: 0.4rem 2rem;
+    gap: 1.5rem;
+    border-bottom: 2px solid #4fc3f7;
+}
+.session-bar-left { display: flex; align-items: center; gap: 0.75rem; }
+.session-bar-label { font-size: 0.85rem; color: #b0bec5; }
+.session-bar-center { display: flex; align-items: center; gap: 1rem; }
+.bar-timer-display {
+    font-family: 'Courier New', monospace;
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #4fc3f7;
+}
+.session-bar-right { display: flex; align-items: center; gap: 0.5rem; }
+
 /* === Content === */
 .content { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
 
@@ -114,6 +145,16 @@ input[type="color"] { width: 50px; height: 36px; padding: 2px; }
     background: white;
     border-radius: 12px;
     box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.watches { display: flex; gap: 1rem; align-items: center; }
+.clock-display {
+    font-size: 1.6rem;
+    font-weight: 700;
+    font-family: 'Courier New', monospace;
+    color: #b0bec5;
+    background: #263238;
+    padding: 0.3rem 1rem;
+    border-radius: 8px;
 }
 .timer-display {
     font-size: 2.5rem;
@@ -246,4 +287,7 @@ hr { border: none; border-top: 1px solid #eee; margin: 1.5rem 0; }
     .admin-grid { grid-template-columns: 1fr; }
     .session-header { flex-wrap: wrap; }
     .timer-display { font-size: 1.8rem; }
+    .clock-display { font-size: 1.2rem; }
+    .session-bar { padding: 0.4rem 1rem; flex-wrap: wrap; gap: 0.5rem; }
+    .nav-clock { font-size: 0.85rem; }
 }

@@ -18,6 +18,8 @@ During a testing session, you follow the ranks of your Jira test scenario. For e
 - Jump back to earlier ranks to finish them
 - Colored boxes represent activity types, width indicates duration
 - Real-time timeline and rank overview table
+- **Time-of-day clock** displayed alongside the stopwatch timer
+- **Persistent session bar** — the running timer and current activity are visible on all pages (Admin, Preparation, Statistics), so you can navigate freely without losing your stopwatch
 
 ### Statistics View
 - Time breakdown by activity type (pie + bar charts)
