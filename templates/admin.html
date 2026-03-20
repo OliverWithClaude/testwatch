@@ -36,11 +36,12 @@
         <div class="card">
             <h3>Scenarios</h3>
             <table class="table" id="scenarios-table">
-                <thead><tr><th>Name</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Jira ID</th><th>Display Name</th><th>Ranks</th><th>Actions</th></tr></thead>
                 <tbody id="sc-body"></tbody>
             </table>
             <div class="form-row">
-                <input type="text" id="new-sc-name" placeholder="Scenario name">
+                <input type="text" id="new-sc-name" placeholder="Jira ID or name">
+                <input type="text" id="new-sc-display" placeholder="Display name (optional)">
                 <button class="btn btn-primary btn-sm" onclick="addScenario()">Add</button>
             </div>
         </div>
@@ -146,8 +147,10 @@ async function loadScenarios() {
     document.getElementById('sc-body').innerHTML = data.map(s => `
         <tr>
             <td>${s.name}</td>
+            <td>${s.display_name || '<span class="muted">—</span>'}</td>
+            <td>${s.rank_count}</td>
             <td>
-                <button class="btn btn-sm btn-outline" onclick="editScenario(${s.id}, '${s.name.replace(/'/g,"\\'")}')">Edit</button>
+                <button class="btn btn-sm btn-outline" onclick="editScenarioDisplayName(${s.id}, '${(s.display_name || '').replace(/'/g,"\\'")}')">Set Display Name</button>
                 <button class="btn btn-sm btn-danger" onclick="deleteScenario(${s.id})">Delete</button>
             </td>
         </tr>
@@ -156,23 +159,25 @@ async function loadScenarios() {
 
 async function addScenario() {
     const name = document.getElementById('new-sc-name').value.trim();
+    const displayName = document.getElementById('new-sc-display').value.trim();
     if (!name) return;
     await fetch('/api/scenarios', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name})
+        body: JSON.stringify({name, display_name: displayName})
     });
     document.getElementById('new-sc-name').value = '';
+    document.getElementById('new-sc-display').value = '';
     await loadScenarios();
 }
 
-async function editScenario(id, oldName) {
-    const name = prompt('Scenario name:', oldName);
-    if (!name) return;
+async function editScenarioDisplayName(id, oldDisplayName) {
+    const displayName = prompt('Display name (e.g. "97.2 Rental Infleeting"):', oldDisplayName);
+    if (displayName === null) return;
     await fetch(`/api/scenarios/${id}`, {
         method: 'PUT',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name})
+        body: JSON.stringify({display_name: displayName})
     });
     await loadScenarios();
 }

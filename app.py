@@ -183,16 +183,23 @@ def get_scenarios():
         FROM scenarios s
         LEFT JOIN ranks r ON r.scenario_id = s.id
         GROUP BY s.id
-        ORDER BY s.name
+        ORDER BY COALESCE(NULLIF(s.display_name,''), s.name)
     """).fetchall()
-    return jsonify([dict(r) for r in rows])
+    result = []
+    for r in rows:
+        d = dict(r)
+        # label: show display_name if set, otherwise name; always include Jira ID if different
+        d['label'] = d['display_name'] if d.get('display_name') else d['name']
+        result.append(d)
+    return jsonify(result)
 
 
 @app.route('/api/scenarios', methods=['POST'])
 def create_scenario():
     data = request.json
     db = get_db()
-    c = db.execute("INSERT INTO scenarios (name) VALUES (?)", (data['name'],))
+    c = db.execute("INSERT INTO scenarios (name, display_name) VALUES (?, ?)",
+                   (data['name'], data.get('display_name', '')))
     db.commit()
     return jsonify({"ok": True, "id": c.lastrowid}), 201
 
@@ -201,8 +208,18 @@ def create_scenario():
 def update_scenario(id):
     data = request.json
     db = get_db()
-    db.execute("UPDATE scenarios SET name=? WHERE id=?", (data['name'], id))
-    db.commit()
+    updates = []
+    params = []
+    if 'name' in data:
+        updates.append("name=?")
+        params.append(data['name'])
+    if 'display_name' in data:
+        updates.append("display_name=?")
+        params.append(data['display_name'])
+    if updates:
+        params.append(id)
+        db.execute(f"UPDATE scenarios SET {', '.join(updates)} WHERE id=?", params)
+        db.commit()
     return jsonify({"ok": True})
 
 
@@ -375,7 +392,7 @@ def import_csv():
 def get_sessions():
     db = get_db()
     rows = db.execute("""
-        SELECT s.*, sc.name as scenario_name
+        SELECT s.*, COALESCE(NULLIF(sc.display_name,''), sc.name) as scenario_name
         FROM sessions s
         JOIN scenarios sc ON s.scenario_id = sc.id
         ORDER BY s.started_at DESC

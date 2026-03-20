@@ -198,7 +198,7 @@ async function loadScenarios() {
     allScenarios = await fetchJson('/api/scenarios');
     const sel = document.getElementById('scenario-select');
     sel.innerHTML = '<option value="">-- Select a scenario --</option>' +
-        allScenarios.map(s => `<option value="${s.id}">${s.name} (${s.rank_count} ranks)</option>`).join('');
+        allScenarios.map(s => `<option value="${s.id}">${s.label} (${s.rank_count} ranks)</option>`).join('');
 
     // Pre-select scenario if only one has ranks, or nothing is selected yet
     const withRanks = allScenarios.filter(s => s.rank_count > 0);
@@ -216,7 +216,7 @@ function onScenarioChange() {
         localStorage.setItem('tw_selected_scenario', scenarioId);
         const s = allScenarios.find(sc => sc.id === parseInt(scenarioId));
         if (s) {
-            infoDiv.innerHTML = `<strong>${s.name}</strong> &mdash; ${s.rank_count} ranks`;
+            infoDiv.innerHTML = `<strong>${s.label}</strong> &mdash; ${s.rank_count} ranks`;
             infoDiv.style.display = 'block';
         }
     } else {
@@ -280,11 +280,11 @@ async function activateSession(scenarioId) {
 
     document.getElementById('session-title').textContent = `Session #${currentSession.id} (${ranks.length} ranks)`;
     const scenarioObj = allScenarios.find(s => s.id === scenarioId);
-    document.getElementById('session-scenario-name').textContent = scenarioObj ? scenarioObj.name : `Scenario ${scenarioId}`;
+    document.getElementById('session-scenario-name').textContent = scenarioObj ? scenarioObj.label : `Scenario ${scenarioId}`;
 
     const rankSel = document.getElementById('rank-select');
-    rankSel.innerHTML = ranks.map(r =>
-        `<option value="${r.id}">${r.rank_id} - ${r.description} [${r.workstream_name || '?'}]</option>`
+    rankSel.innerHTML = ranks.map((r, i) =>
+        `<option value="${r.id}">Rank ${i+1} | ${r.jira_key || r.rank_id} | ${r.workstream_name || '?'} | ${r.description}</option>`
     ).join('');
 
     // Set defaults if not already set
@@ -475,10 +475,10 @@ function renderRankTable() {
     const maxDuration = Math.max(...entries.filter(e => e.duration_seconds > 0).map(e => e.duration_seconds), 1);
     container.innerHTML = `<table class="table">
         <thead>
-            <tr><th>Rank</th><th>Description</th><th>Workstream</th><th>Timeline</th><th>Total</th></tr>
+            <tr><th>#</th><th>Jira Key</th><th>Workstream</th><th>Description</th><th>Timeline</th><th>Total</th></tr>
         </thead>
         <tbody>
-            ${ranks.map(r => {
+            ${ranks.map((r, i) => {
                 const rankEntries = entries.filter(e => e.rank_id === r.id && e.duration_seconds > 0);
                 const totalSec = rankEntries.reduce((s, e) => s + e.duration_seconds, 0);
                 const totalMin = (totalSec / 60).toFixed(1);
@@ -487,13 +487,11 @@ function renderRankTable() {
                     return `<div class="rank-box" style="width:${w}px; background:${e.activity_color};"
                                  title="${e.activity_name}: ${(e.duration_seconds/60).toFixed(1)}m"></div>`;
                 }).join('');
-                const jiraLink = r.jira_key
-                    ? `<a href="${JIRA_BASE_URL}${r.jira_key}" target="_blank" class="jira-link">${r.rank_id}</a>`
-                    : r.rank_id;
                 return `<tr class="${selectedRankId === r.id ? 'selected-rank' : ''}">
-                    <td class="rank-id">${jiraLink}</td>
-                    <td>${r.description}</td>
+                    <td class="rank-id">${i + 1}</td>
+                    <td class="rank-id">${r.jira_key || r.rank_id}</td>
                     <td><span class="ws-badge">${r.workstream_name || '-'}</span></td>
+                    <td>${r.description}</td>
                     <td><div class="rank-timeline">${boxes || '<span class="muted">-</span>'}</div></td>
                     <td>${totalMin}m</td>
                 </tr>`;

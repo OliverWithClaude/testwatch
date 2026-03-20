@@ -79,6 +79,11 @@ def init_db():
         FOREIGN KEY (activity_type_id) REFERENCES activity_types(id) ON DELETE CASCADE
     )''')
 
+    # Migrate: add display_name column to scenarios if missing
+    scols = [row[1] for row in c.execute("PRAGMA table_info(scenarios)").fetchall()]
+    if 'display_name' not in scols:
+        c.execute("ALTER TABLE scenarios ADD COLUMN display_name TEXT DEFAULT ''")
+
     # Migrate: add jira_key column to ranks if missing
     cols = [row[1] for row in c.execute("PRAGMA table_info(ranks)").fetchall()]
     if 'jira_key' not in cols:
