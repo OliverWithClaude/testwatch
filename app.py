@@ -306,7 +306,14 @@ def import_csv():
         for ws in db.execute("SELECT id, name FROM workstreams").fetchall():
             ws_cache[ws['name']] = ws['id']
 
+        # Build lookup of existing ranks by jira_key for this scenario (for upsert)
+        existing_ranks = {}
+        for r in db.execute("SELECT id, jira_key FROM ranks WHERE scenario_id=? AND jira_key != ''",
+                            (scenario_id,)).fetchall():
+            existing_ranks[r['jira_key']] = r['id']
+
         imported = 0
+        updated = 0
         for i, row in enumerate(rows):
             if len(row) <= test_key_idx:
                 continue
@@ -335,18 +342,26 @@ def import_csv():
                     desc_parts.append(executor)
             description = ' | '.join(desc_parts)
 
-            db.execute("""INSERT INTO ranks (scenario_id, rank_id, description, workstream_id, sort_order, jira_key)
-                          VALUES (?, ?, ?, ?, ?, ?)""",
-                       (scenario_id, test_key, description, ws_id, i + 1, test_key))
-            imported += 1
+            if test_key in existing_ranks:
+                # Update existing rank
+                db.execute("""UPDATE ranks SET description=?, workstream_id=?, sort_order=?
+                              WHERE id=?""",
+                           (description, ws_id, i + 1, existing_ranks[test_key]))
+                updated += 1
+            else:
+                db.execute("""INSERT INTO ranks (scenario_id, rank_id, description, workstream_id, sort_order, jira_key)
+                              VALUES (?, ?, ?, ?, ?, ?)""",
+                           (scenario_id, test_key, description, ws_id, i + 1, test_key))
+                imported += 1
 
         db.commit()
-        logger.info("CSV import: scenario=%s (id=%d), %d ranks imported", scenario_name, scenario_id, imported)
+        logger.info("CSV import: scenario=%s (id=%d), %d new, %d updated", scenario_name, scenario_id, imported, updated)
         return jsonify({
             "ok": True,
             "scenario_id": scenario_id,
             "scenario_name": scenario_name,
-            "imported": imported
+            "imported": imported,
+            "updated": updated
         }), 201
 
     except Exception as e:

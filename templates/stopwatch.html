@@ -7,8 +7,9 @@
         <h2>Start a Testing Session</h2>
         <div class="form-row">
             <label>Scenario:</label>
-            <select id="scenario-select"></select>
+            <select id="scenario-select" onchange="onScenarioChange()"></select>
         </div>
+        <div id="selected-scenario-info" class="scenario-info" style="display:none;"></div>
         <div class="form-row">
             <label>Session Name (optional):</label>
             <input type="text" id="session-name" placeholder="e.g. Day 3 Morning">
@@ -23,7 +24,10 @@
     <!-- Active Session -->
     <div id="active-session" style="display:none;">
         <div class="session-header">
-            <h2 id="session-title"></h2>
+            <div>
+                <h2 id="session-title"></h2>
+                <div id="session-scenario-name" class="session-scenario-label"></div>
+            </div>
             <div class="watches">
                 <div class="clock-display">
                     <span id="clock">--:--:--</span>
@@ -192,11 +196,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
+let allScenarios = [];
+
 async function loadScenarios() {
-    const scenarios = await fetchJson('/api/scenarios');
+    allScenarios = await fetchJson('/api/scenarios');
     const sel = document.getElementById('scenario-select');
     sel.innerHTML = '<option value="">-- Select a scenario --</option>' +
-        scenarios.map(s => `<option value="${s.id}">${s.name} (${s.rank_count} ranks)</option>`).join('');
+        allScenarios.map(s => `<option value="${s.id}">${s.name} (${s.rank_count} ranks)</option>`).join('');
+
+    // Restore last selected scenario from preparation page or previous visit
+    const lastScenario = localStorage.getItem('tw_selected_scenario');
+    if (lastScenario && allScenarios.find(s => s.id === parseInt(lastScenario))) {
+        sel.value = lastScenario;
+        onScenarioChange();
+    }
+}
+
+function onScenarioChange() {
+    const sel = document.getElementById('scenario-select');
+    const scenarioId = sel.value;
+    const infoDiv = document.getElementById('selected-scenario-info');
+    if (scenarioId) {
+        localStorage.setItem('tw_selected_scenario', scenarioId);
+        const s = allScenarios.find(sc => sc.id === parseInt(scenarioId));
+        if (s) {
+            infoDiv.innerHTML = `<strong>${s.name}</strong> &mdash; ${s.rank_count} ranks`;
+            infoDiv.style.display = 'block';
+        }
+    } else {
+        infoDiv.style.display = 'none';
+    }
 }
 
 async function loadSessions() {
@@ -254,6 +283,8 @@ async function activateSession(scenarioId) {
     console.log(`Loaded ${ranks.length} ranks for scenario ${scenarioId}`);
 
     document.getElementById('session-title').textContent = `Session #${currentSession.id} (${ranks.length} ranks)`;
+    const scenarioObj = allScenarios.find(s => s.id === scenarioId);
+    document.getElementById('session-scenario-name').textContent = scenarioObj ? scenarioObj.name : `Scenario ${scenarioId}`;
 
     const rankSel = document.getElementById('rank-select');
     rankSel.innerHTML = ranks.map(r =>

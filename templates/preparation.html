@@ -63,6 +63,12 @@ let workstreams = [];
 
 document.addEventListener('DOMContentLoaded', async () => {
     await refreshScenarios();
+    // Restore last selected scenario
+    const lastScenario = localStorage.getItem('tw_selected_scenario');
+    if (lastScenario) {
+        document.getElementById('scenario-select').value = lastScenario;
+        await loadRanks();
+    }
     workstreams = await (await fetch('/api/workstreams')).json();
     const wsSel = document.getElementById('new-rank-ws');
     wsSel.innerHTML = '<option value="">-- None --</option>' +
@@ -102,7 +108,10 @@ async function importCsv() {
             resultDiv.innerHTML = `<span class="error-text">Error: ${data.error}</span>`;
             return;
         }
-        resultDiv.innerHTML = `<span class="success-text">Imported ${data.imported} ranks into scenario "${data.scenario_name}"</span>`;
+        const parts = [];
+        if (data.imported > 0) parts.push(`${data.imported} new`);
+        if (data.updated > 0) parts.push(`${data.updated} updated`);
+        resultDiv.innerHTML = `<span class="success-text">${parts.join(', ')} ranks in scenario "${data.scenario_name}"</span>`;
         // Refresh and select the new scenario
         await refreshScenarios();
         workstreams = await (await fetch('/api/workstreams')).json();
@@ -116,6 +125,8 @@ async function importCsv() {
 // --- Ranks ---
 async function loadRanks() {
     const scenarioId = document.getElementById('scenario-select').value;
+    // Sync selected scenario to localStorage for stopwatch page
+    if (scenarioId) localStorage.setItem('tw_selected_scenario', scenarioId);
     if (!scenarioId) { document.getElementById('ranks-section').style.display = 'none'; return; }
     document.getElementById('ranks-section').style.display = 'block';
 
