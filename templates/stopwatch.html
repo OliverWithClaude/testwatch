@@ -195,7 +195,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadScenarios() {
     const scenarios = await fetchJson('/api/scenarios');
     const sel = document.getElementById('scenario-select');
-    sel.innerHTML = scenarios.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    sel.innerHTML = '<option value="">-- Select a scenario --</option>' +
+        scenarios.map(s => `<option value="${s.id}">${s.name} (${s.rank_count} ranks)</option>`).join('');
 }
 
 async function loadSessions() {
@@ -251,6 +252,8 @@ async function activateSession(scenarioId) {
         return;
     }
     console.log(`Loaded ${ranks.length} ranks for scenario ${scenarioId}`);
+
+    document.getElementById('session-title').textContent = `Session #${currentSession.id} (${ranks.length} ranks)`;
 
     const rankSel = document.getElementById('rank-select');
     rankSel.innerHTML = ranks.map(r =>

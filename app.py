@@ -178,7 +178,13 @@ def delete_workstream(id):
 @app.route('/api/scenarios', methods=['GET'])
 def get_scenarios():
     db = get_db()
-    rows = db.execute("SELECT * FROM scenarios ORDER BY name").fetchall()
+    rows = db.execute("""
+        SELECT s.*, COUNT(r.id) as rank_count
+        FROM scenarios s
+        LEFT JOIN ranks r ON r.scenario_id = s.id
+        GROUP BY s.id
+        ORDER BY s.name
+    """).fetchall()
     return jsonify([dict(r) for r in rows])
 
 
