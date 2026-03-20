@@ -64,7 +64,7 @@ let workstreams = [];
 document.addEventListener('DOMContentLoaded', async () => {
     await refreshScenarios();
     // Restore last selected scenario
-    const lastScenario = localStorage.getItem('tw_selected_scenario');
+    const lastScenario = localStorage.getItem('tw_prep_scenario');
     if (lastScenario) {
         document.getElementById('scenario-select').value = lastScenario;
         await loadRanks();
@@ -125,8 +125,8 @@ async function importCsv() {
 // --- Ranks ---
 async function loadRanks() {
     const scenarioId = document.getElementById('scenario-select').value;
-    // Sync selected scenario to localStorage for stopwatch page
-    if (scenarioId) localStorage.setItem('tw_selected_scenario', scenarioId);
+    // Remember selection for this page
+    if (scenarioId) localStorage.setItem('tw_prep_scenario', scenarioId);
     if (!scenarioId) { document.getElementById('ranks-section').style.display = 'none'; return; }
     document.getElementById('ranks-section').style.display = 'block';
 

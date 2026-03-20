@@ -163,21 +163,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadScenarios();
     await loadSessions();
 
-    // Auto-restore session from localStorage
+    // Auto-restore active session from localStorage
     const saved = loadSessionState();
     if (saved && saved.sessionId) {
         const sessions = await fetchJson('/api/sessions');
-        // Guard: if user already started/resumed a session while we were fetching, abort restore
-        if (currentSession) {
-            console.log('Auto-restore aborted: user already started a session');
-            return;
-        }
+        if (currentSession) return; // user already acted
         const session = sessions.find(s => s.id === saved.sessionId && !s.ended_at);
         if (session) {
             currentSession = {id: session.id, scenario_id: session.scenario_id, name: session.name};
             await activateSession(session.scenario_id);
 
-            // Restore running entry — validate IDs against loaded data
+            // Restore running timer if there was one
             if (saved.currentEntryId && saved.currentEntryStart) {
                 currentEntryId = saved.currentEntryId;
                 currentEntryStart = new Date(saved.currentEntryStart);
@@ -187,8 +183,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 updateRankSelectValue();
                 startTimerDisplay();
                 updateCurrentActivityInfo();
-                saveSessionState();
             }
+            saveSessionState();
             return;
         } else {
             clearSessionState();
@@ -204,10 +200,10 @@ async function loadScenarios() {
     sel.innerHTML = '<option value="">-- Select a scenario --</option>' +
         allScenarios.map(s => `<option value="${s.id}">${s.name} (${s.rank_count} ranks)</option>`).join('');
 
-    // Restore last selected scenario from preparation page or previous visit
-    const lastScenario = localStorage.getItem('tw_selected_scenario');
-    if (lastScenario && allScenarios.find(s => s.id === parseInt(lastScenario))) {
-        sel.value = lastScenario;
+    // Pre-select scenario if only one has ranks, or nothing is selected yet
+    const withRanks = allScenarios.filter(s => s.rank_count > 0);
+    if (withRanks.length === 1) {
+        sel.value = withRanks[0].id;
         onScenarioChange();
     }
 }
